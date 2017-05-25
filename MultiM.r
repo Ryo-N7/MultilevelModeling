@@ -313,8 +313,98 @@ ranef(lme.m5)    # week   summed = ~0
 
 
 # all regression assumptions apply = necessity check beforehand, VIF/multicollinearity etc etc. etc.
+# search vif.lme custom function
 
 
+# Advanced models using lm4
+library(lme4)
+
+names(orgs)
+# pid, wp, org, jobs, age , gender, control, demands, js, support.wp, resources.org, absence, tasksig.jobs
+
+head(orgs)
+unique(orgs$org) # orgs # 1 - # 10
+unique(orgs$wp)   # number of workplaces, 250.
+unique(orgs$jobs) # 6 types of jobs
 
 
+gls.m0 <- gls(js ~ 1, data = orgs)
+lmer.m0 <- lmer(js ~ 1 + (1|wp), data = orgs)
+anova(gls.m0, lmer.m0)
+# p-value = ~0. significant!
+1 -pchisq(-2 * (logLik(gls.m0)[1] - logLik(lmer.m0)[1]), 1)
+AIC(gls.m0)
+AIC(lmer.m0)
 
+lmer.m1 <- lmer(js ~ age + gender + demands + control + (1|wp), data = orgs)
+summary(lmer.m1)
+# df calculations based on approximations... may change based on order of variables passed in model
+# usage t-value for significance instead! close ~normal distribution, treat as Z-value.
+# also test using Max.L and drop1()
+
+lmer.m1ml<-lmer(js~age+gender+demands+control+(1|wp), REML=FALSE, data=orgs)   # use REML = FALSE for Max. Likelihood
+drop1(lmer.m1ml, test="Chisq")
+# demands and control significant.
+
+lmer.m2<-lmer(js~age+gender+demands+control+ support.wp+(1|wp), data=orgs)
+summary(lmer.m2)
+# also test using lmerTest package
+library(lmerTest)
+lmer.m2<-lmer(js~age+gender+demands+control+ support.wp+(1|wp), data=orgs)
+summary(lmer.m2)   # now shoes p-values!!!
+
+# also test usign confint()
+# Bootstrap: most accurate + computationally intensive
+confint(lmer.m2, method = "profile")
+confint(lmer.m2, method = "Wald")
+confint(lmer.m2, method = "boot", nsim = 1000, .progress = "txt", PBargs = list(style = 3))
+# simulate values   ~ defautl: 500, preferably 1000 or 10000 higher
+#                  2.5 %      97.5 %
+# .sig01       0.39874012  0.50373921
+# .sigma       1.03360261  1.07830293
+# (Intercept)  8.58364561  9.12682084
+# age         -0.00459184  0.00410229
+# genderMale  -0.08036466  0.04733161
+# demands     -0.32306590 -0.26099500
+# control      0.15471036  0.21730572
+# support.wp   0.27125909  0.38286499
+
+# add third leve and test if improve model
+# comparison of models with different random effects: refit = FALSE, anova() refit with ML > REML
+lmer.m3<-lmer(js~age+gender+demands+control+ support.wp+ (1|org/wp), data=orgs)
+summary(lmer.m3)
+anova(lmer.m2, lmer.m3, refit=FALSE)
+# significant difference! third-level improves upon model2
+# adding k subscript for random effect of organization! (into equation, change from fixed effect of 2nd model's intercept)
+
+# add group level predictor for third-level:
+lmer.m4<-lmer(js~age+gender+demands+control+ support.wp+resources.org+(1|org/wp), data=orgs)
+summary(lmer.m4)
+# resources.org, p-value: 0.757, NOT significant
+
+# add fourth-level, CROSS-CLASSIFIED "jobs" random effect
+lmer.m5<-lmer(js~age+gender+demands+control+support.wp+resources.org+
+                (1|org/wp) + (1|jobs), data=orgs)
+summary(lmer.m5)
+# 3 sets of random effects: wp:org, org, jobs
+anova(lmer.m4, lmer.m5, refit=FALSE)
+
+# add group-level predictors for fourth-level:
+lmer.m6<-lmer(js~age+gender+demands+control+ support.wp+resources.org+ tasksig.jobs+
+                (1|org/wp) + (1|jobs), data=orgs)
+lmer.m6ml<-lmer(js~age+gender+demands+control+ support.wp+resources.org+ tasksig.jobs+
+                  (1|org/wp) + (1|jobs), REML=FALSE, data=orgs)
+drop1(lmer.m6ml, test="Chisq")
+# for tasksig.jobs: t-values = NOT significant, but chisq = significant  >>> chisq ^reliable
+
+
+#### Centering variables ####
+
+# Grand mean centering:
+# subtract grand mean of sample from each score
+# linear transformation, results NOT change from untransformed variables
+
+# Group mean centering:
+# subtract the 'J'th group mean from each observation within that group
+# non-linear transformation of variable data = refitting model result in change ALL coefficients
+# each score of centered variable = deviation from group mean, meaning of predictor = CHANGE!
