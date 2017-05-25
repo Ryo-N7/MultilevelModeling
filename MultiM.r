@@ -5,6 +5,8 @@ library(tidyverse)
 library(ggplot2)
 library(lme4)
 library(nlme)
+library(multilevel)
+library(splines)
 
 # Look at the variable names in 'education' dataset:
 education %>% names()
@@ -183,6 +185,136 @@ lme.m4ml <- lme(perf ~ gender + tage + tgender + hours + partic + pcohesion +
                  hours.grp + partic.grp + pcohesion.grp, 
                random = ~ -hours|grpid, method = "ML", data = education)
 drop1(lme.m4ml, test = "Chisq")
+
+
+# STEP 4: cross-level interactions
+# use level-2 (group-level) predictors to explain variability of slopes
+# substitute level-2 equations into level-1 equations
+# level-2 predictor is multiplied (interacting) with level-1 predictor (of slope can vary between groups)
+# when use level-2 predictors to model slove variability @ level-1 == test the INTERACTION between variables at the two different levels!
+
+lme.m5 <- lme(perf ~ gender+tage+tgender+hours+partic+pcohesion+
+                hours.grp + partic.grp + pcohesion.grp+
+                hours*hours.grp + hours * partic.grp + hours * pcohesion.grp,
+              random = ~hours|grpid, data = education)
+summary(lme.m5)
+VarCorr(lme.m5)
+VarCorr(lme.m4)
+# significant effect of hours of study at indiv. and perceivedcohesion group level on performance
+# ^ cohesion in classroom, hours of study at individual level effect on performance becomes stronger!
+1 - 0.809/0.9359     # ~13.5% variance explained by adding interaction effects of random slopes
+
+
+
+# With Max.Likelihood to test if interactions = improve model fit?
+lme.m5ml <- lme(perf ~ gender+tage+tgender+hours+partic+pcohesion+
+                hours.grp + partic.grp + pcohesion.grp+
+                hours*hours.grp + hours * partic.grp + hours * pcohesion.grp,
+              random = ~hours|grpid, method = "ML", data = education)
+drop1(lme.m5ml, test = "Chisq")
+
+
+
+
+
+
+# Longitudinal data:
+# observations over time = nested within higher level units such as individual/organizations/etc.
+# time as random effect
+# problem: regression toward mean over time, 
+# therefore, necessity model for different trajectories (need ^^ data, splines, polynomial models...)
+# advantage: missing responses from one time period DONT need to be excluded
+# Order of observations = specific + important in model.
+# plug time variable into model, test for fixed effect, test for variation of fixed effect between subject (the higher-level units...)
+# slope of time = trajectory of change of DV
+
+# add parameter: correlation = corAR1()   autoregressive of order 1 (previous iteration will influence next iteration)
+# test if improve model by comparison to model without AR correlation matrix
+# hypotheses: cross-level interaction between time and predictor measured at higher level
+# time = varying effect, cross-level means higher-level predictor explains the varying slopes for TIME
+
+# Step 1: Examine if varying intercept imrpoves model
+# Step 2a: add TIME as fixed effect
+# Step 2b: specify TIME as random effect and comparison with Model 2a
+# Step 2c: test for serial correlation and comparison with Model 2b
+# Step 3: add level-1 and level-2 predictors
+# Step 4:Examine if varying slope for level-1 predictors improves model
+# Step 5:Add level-2 predictors to explain slope variation (cross-level interactions)
+
+rm(list = ls())
+names(migraine)
+head(migraine)
+# pid = person id, week = # week, age = age, treatment = # of treatment given per week, migr = migraine
+
+migraine <- migraine[order(as.numeric(migraine$pid)),]
+ggplot(migraine[1:832, ], aes(x = week, y = migr, color = pid)) +
+  geom_point() +
+  stat_smooth(method = "lm", formula = y ~ ns(x, 3)) + 
+  facet_wrap(~pid)
+
+# Step 1
+gls.null <- gls(migr~1, data = migraine)
+lme.null <- lme(migr ~ 1, random = ~1|pid, data = migraine)
+anova(gls.null, lme.null)
+# significant difference!
+
+# Step 2
+# TIME variable start from ZERO
+# Transform week variable so Week 1 = 0 in dataset
+migraine$week<-migraine$week-1
+lme.m1<-lme(migr~week, random=~1|pid, data=migraine)
+summary(lme.m1)
+# negative association
+
+# polynomial models ex. quadratic model, poly() >>> difficult to interpret results
+lme.m1b<-lme(migr~week+I(week^2), random=~1|pid, data=migraine)
+summary(lme.m1b)
+
+lme.m1c<-lme(migr~ns(week,3), random=~1|pid, data=migraine)
+summary(lme.m1c)
+
+# Random effect for week
+lme.m2<-lme(migr~week, random=~week|pid, data=migraine)
+anova(lme.m1, lme.m2)
+summary(lme.m2)
+# significant difference between model with fixed slope for effect weeks and random slope for effect weeks (time)
+
+# Add auto-correlation matrix
+lme.m3<-lme(migr~week, random=~week|pid, correlation=corAR1(), data=migraine)
+anova(lme.m2, lme.m3)
+# NO significant difference, no improvement in model fit from adding auto-correlation
+
+# Step 3: add predictors to model
+lme.m4<-lme(migr~age+week+treat, random=~week|pid, data=migraine)
+lme.m4ml<-lme(migr~age+week+treat, random=~week|pid, 
+            method = "ML", data=migraine)
+drop1(lme.m4ml, test = "Chisq")
+summary(lme.m4)
+
+# Skip Step 4 as no need to add more random effects
+
+# Step 5: cross-level interaction between week of treatments and # of treatments
+# explain steepness of trajectory of migrains (rate of change in migraines)
+# predict how fast patient is improving (bigger slope = faster improvement)
+lme.m5<-lme(migr~age+week*treat, random=~week|pid, data=migraine)
+summary(lme.m5)
+1 - 0.0001820253/0.0002234984   # 18% variation of migraine intensity explained by interaction of week and# of treatments
+
+# week:treat coefficient: -0.005821
+# # of treatments/week is negatively associated with the rate of change (slope of migraines became weaker at faster pace) in the experience of migraine intensity
+# more treatments, migraine intensity decrease at faster pace
+# # of treatments/week NOT direct effect on migraine intensity
+# for every additional treatment, impact on slope of migraine intensity over TIME
+# person with 3 treatment/week over 20 weeks have more migraine intensity compared to
+# person with 4 treatment/week over 20 weeks as negative slope of migraine intensity is stronger
+
+# week coefficient: 0.000634
+ranef(lme.m5)    # week   summed = ~0
+
+
+# all regression assumptions apply = necessity check beforehand, VIF/multicollinearity etc etc. etc.
+
+
 
 
 
